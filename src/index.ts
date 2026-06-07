@@ -1,10 +1,23 @@
 #!/usr/bin/env node
 import { program } from "commander";
-import fs, { existsSync } from "fs";
+import fs, { existsSync, globSync } from "fs";
 import path from "path";
 import { execSync } from "child_process";
 
-const BASES_DIR = ".variant-bases";
+const BASES_DIR = path.join(findPackageRoot(), ".variant-bases");
+
+function findPackageRoot(): string {
+  let dir = process.cwd();
+  while (true) {
+    if (fs.existsSync(path.join(dir, "package.json"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      console.error("Could not find a package.json in any parent directory");
+      process.exit(1);
+    }
+    dir = parent;
+  }
+}
 
 try {
   execSync("git --version", { stdio: "ignore" });
@@ -55,6 +68,33 @@ program
     deepCopyFolder(sourcePath, baseSnapshot);
 
     console.log(`Rebased ${targetPath} onto ${sourcePath}`);
+  });
+
+program
+  .name("variant")
+  .command("list <sourcePath>")
+  .description("list all variants branched from the given path")
+  .action((sourcePath: string) => {
+    const header = `// branched from: ${sourcePath}`;
+    const root = findPackageRoot();
+
+    const variants = new Set(
+      globSync("**/*", { cwd: root, exclude: (p) => p.includes("node_modules") })
+        .filter((f) => {
+          const abs = path.join(root, f);
+          if (!fs.statSync(abs).isFile()) return false;
+          const firstLine = fs.readFileSync(abs, "utf-8").split("\n")[0];
+          return firstLine === header;
+        })
+        .map((f) => path.dirname(f))
+    );
+
+    if (variants.size === 0) {
+      console.log(`No variants found for ${sourcePath}`);
+    } else {
+      console.log(`Variants branched from ${sourcePath}:`);
+      for (const v of variants) console.log(`  ${v}`);
+    }
   });
 
 program.parse();
