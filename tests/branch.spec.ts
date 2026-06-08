@@ -1,29 +1,41 @@
 import { execSync } from "child_process";
-import { existsSync, readFileSync, writeFileSync, rmSync } from "fs";
+import { resolve } from "path";
+import { existsSync, readFileSync, writeFileSync, rmSync, mkdirSync } from "fs";
 import { afterEach, describe, it, expect } from "vitest";
 
-describe("branch command", () => {
-  const NAME = "myTestButtonBranched";
+const getPath = () => {
+  const path = resolve(
+    "./test-out",
+    expect.getState().currentTestName?.replace(/[^a-z0-9]/gi, "-") ?? "",
+  );
 
+  mkdirSync(path, { recursive: true });
+
+  return path;
+};
+
+const baseCommand = () => {
+  return `npx tsx ./src/index.ts --bases-dir ${getPath()}/bases`
+}
+
+describe("branch command", () => {
   afterEach(() => {
-    rmSync(`./test-out/button`, { recursive: true, force: true });
-    rmSync(`./test-out/${NAME}`, { recursive: true, force: true });
-    rmSync(`./.variant-bases/${NAME}`, { recursive: true, force: true });
+    rmSync(getPath(), { recursive: true, force: true });
   });
 
   it("should create a simple copy", () => {
     // copy a mock to the test folder
-    execSync("cp -r ./test-in/button ./test-out/button");
+    execSync(`cp -r ./test-in/button ${getPath()}/button`);
 
     // branch the new mock component
     execSync(
-      `npx tsx ./src/index.ts branch ./test-out/button ./test-out/${NAME}`,
+      `${baseCommand()}  branch ${getPath()}/button ${getPath()}/button-1`,
     );
 
-    expect(existsSync(`./test-out/${NAME}`)).toBe(true);
+    expect(existsSync(`${getPath()}/button-1`)).toBe(true);
 
-    const contents = readFileSync(`./test-out/${NAME}/index.tsx`, "utf-8");
-    expect(contents).toContain("// branched from: ./test-out/button");
+    const contents = readFileSync(`${getPath()}/button-1/index.tsx`, "utf-8");
+    expect(contents).toContain(`// branched from: ${getPath()}/button`);
     expect(contents).toContain(
       readFileSync("./test-in/button/index.tsx", "utf-8"),
     );
@@ -31,125 +43,153 @@ describe("branch command", () => {
 });
 
 describe("rebase command", () => {
-  const NAME = "myTestButtonRebased";
-  const BASE = "button-1";
-
   afterEach(() => {
-    rmSync(`./test-out/${BASE}`, { recursive: true, force: true });
-    rmSync(`./test-out/${NAME}`, { recursive: true, force: true });
-    rmSync(`./.variant-bases/${NAME}`, { recursive: true, force: true });
+    rmSync(getPath(), { recursive: true, force: true });
   });
 
   it("should rebase the changes", () => {
     // copy a mock to the test folder
-    execSync(`cp -r ./test-in/button ./test-out/${BASE}`);
+    execSync(`cp -r ./test-in/button ${getPath()}/button`);
 
     // create a branch of the component
     execSync(
-      `npx tsx ./src/index.ts branch ./test-out/${BASE} ./test-out/${NAME}`,
+      `${baseCommand()} branch ${getPath()}/button ${getPath()}/button-1`,
     );
-    expect(existsSync(`./test-out/${NAME}`)).toBe(true);
+    expect(existsSync(`${getPath()}/button-1`)).toBe(true);
 
     // update the base component
-    const contents = readFileSync(`./test-out/${BASE}/index.tsx`, "utf-8");
+    const contents = readFileSync(`${getPath()}/button/index.tsx`, "utf-8");
     writeFileSync(
-      `./test-out/${BASE}/index.tsx`,
+      `${getPath()}/button/index.tsx`,
       contents.replace("Button", "MyButton"),
     );
 
     // rebase the component
     execSync(
-      `npx tsx ./src/index.ts rebase ./test-out/${BASE} ./test-out/${NAME}`,
+      `${baseCommand()} rebase ${getPath()}/button ${getPath()}/button-1`,
     );
-    expect(readFileSync(`./test-out/${NAME}/index.tsx`, "utf-8")).toContain(
+    expect(readFileSync(`${getPath()}/button-1/index.tsx`, "utf-8")).toContain(
       "export const MyButton = () => {",
     );
   });
 });
 
 describe("rebase command", () => {
-  const NAME = "myTestButtonRebased2";
-  const BASE = "button-2";
-
   afterEach(() => {
-    rmSync(`./test-out/${BASE}`, { recursive: true, force: true });
-    rmSync(`./test-out/${NAME}`, { recursive: true, force: true });
-    rmSync(`./.variant-bases/${NAME}`, { recursive: true, force: true });
+    rmSync(getPath(), { recursive: true, force: true });
   });
 
   it("should rebase the changes", () => {
     // copy a mock to the test folder
-    execSync(`cp -r ./test-in/button ./test-out/${BASE}`);
+    execSync(`cp -r ./test-in/button ${getPath()}/button`);
 
     // create a branch of the component
     execSync(
-      `npx tsx ./src/index.ts branch ./test-out/${BASE} ./test-out/${NAME}`,
+      `${baseCommand()} branch ${getPath()}/button ${getPath()}/button-1`,
     );
-    expect(existsSync(`./test-out/${NAME}`)).toBe(true);
+    expect(existsSync(`${getPath()}/button-1`)).toBe(true);
 
     // update the base component
-    const contents = readFileSync(`./test-out/${BASE}/index.tsx`, "utf-8");
+    const contents = readFileSync(`${getPath()}/button/index.tsx`, "utf-8");
     writeFileSync(
-      `./test-out/${BASE}/index.tsx`,
+      `${getPath()}/button/index.tsx`,
       contents.replace("Button", "MyButton"),
     );
 
     // update the branched component
-    const newContents = readFileSync(`./test-out/${NAME}/index.tsx`, "utf-8");
+    const newContents = readFileSync(`${getPath()}/button-1/index.tsx`, "utf-8");
     writeFileSync(
-      `./test-out/${NAME}/index.tsx`,
+      `${getPath()}/button-1/index.tsx`,
       newContents.replace("Button", "TheirButton"),
     );
 
     // rebase the component
     execSync(
-      `npx tsx ./src/index.ts rebase ./test-out/${BASE} ./test-out/${NAME}`,
+      `${baseCommand()} rebase ${getPath()}/button ${getPath()}/button-1`,
     );
 
-    const fileContents = readFileSync(`./test-out/${NAME}/index.tsx`, "utf-8");
+    const fileContents = readFileSync(`${getPath()}/button-1/index.tsx`, "utf-8");
 
     expect(fileContents).toContain("export const MyButton = () => {");
     expect(fileContents).toContain("export const TheirButton = () => {");
 
     expect(fileContents).toContain(
-      "<<<<<<< test-out/myTestButtonRebased2/index.tsx",
+      "<<<<<<< /Users/jesse/Projects/mono-components/test-out/rebase-command---should-rebase-the-changes/button-1/index.tsx"
     );
     expect(fileContents).toContain("=======");
-    expect(fileContents).toContain(">>>>>>> test-out/button-2/index.tsx");
+    expect(fileContents).toContain(
+      ">>>>>>> /Users/jesse/Projects/mono-components/test-out/rebase-command---should-rebase-the-changes/button/index.tsx"
+    );
+  });
+
+  it("should rebase all", () => {
+    // copy a mock to the test folder for the base
+    execSync(`cp -r ./test-in/button ${getPath()}/button`);
+
+    // branch the new mock component
+    execSync(
+      `${baseCommand()} branch ${getPath()}/button ${getPath()}/button-1`,
+    );
+    execSync(
+      `${baseCommand()} branch ${getPath()}/button ${getPath()}/button-2`,
+    );
+
+    // edit the base
+    const contents = readFileSync(`${getPath()}/button/index.tsx`, "utf-8");
+    writeFileSync(
+      `${getPath()}/button/index.tsx`,
+      contents.replace("Button", "MyButton"),
+    );
+
+    const contents1 = readFileSync(`${getPath()}/button-1/index.tsx`, "utf-8");
+    writeFileSync(
+      `${getPath()}/button-1/index.tsx`,
+      contents1.replace("{}", "Button1"),
+    );
+
+    const contents2 = readFileSync(`${getPath()}/button-2/index.tsx`, "utf-8");
+    writeFileSync(
+      `${getPath()}/button-2/index.tsx`,
+      contents2.replace("{}", "Button2"),
+    );
+
+    execSync(`${baseCommand()} rebase ${getPath()}/button --all`);
+
+
+    const newContents1 = readFileSync(`${getPath()}/button-1/index.tsx`, "utf-8");
+    expect(newContents1).toContain("export const MyButton = () => {");
+    expect(newContents1).toContain("<button>Button1</button>");
+
+    const newContents2 = readFileSync(`${getPath()}/button-2/index.tsx`, "utf-8");
+    expect(newContents2).toContain("export const MyButton = () => {");
+    expect(newContents2).toContain("<button>Button2</button>");
   });
 });
 
 describe("list command", () => {
-  const BASE = "list-button";
-  const NAME = "list-button";
 
   afterEach(() => {
-    rmSync(`./test-out/${NAME}`, { recursive: true, force: true });
-    rmSync(`./test-out/${NAME}-1`, { recursive: true, force: true });
-    rmSync(`./test-out/${NAME}-2`, { recursive: true, force: true });
+    rmSync(getPath(), { recursive: true, force: true });
 
-    rmSync(`./.variant-bases/${NAME}`, { recursive: true, force: true });
-    rmSync(`./.variant-bases/${NAME}-1`, { recursive: true, force: true });
-    rmSync(`./.variant-bases/${NAME}-2`, { recursive: true, force: true });
   });
 
   it("should list variants branched from this component.", () => {
     // copy a button into the context
-    execSync(`cp -r ./test-in/button ./test-out/${BASE}`);
+    execSync(`cp -r ./test-in/button ${getPath()}/button`);
 
     // create three copies
     execSync(
-      `npx tsx ./src/index.ts branch ./test-out/${BASE} ./test-out/${NAME}-1`,
+      `${baseCommand()} branch ${getPath()}/button ${getPath()}/button-1`,
     );
 
     execSync(
-      `npx tsx ./src/index.ts branch ./test-out/${BASE} ./test-out/${NAME}-2`,
+      `${baseCommand()} branch ${getPath()}/button ${getPath()}/button-2`,
     );
 
-    const output = execSync(`npx tsx ./src/index.ts list ./test-out/${BASE}`, {
+    const output = execSync(`${baseCommand()} list ${getPath()}/button`, {
       encoding: "utf-8",
     });
-    expect(output).toContain(`test-out/${NAME}-1`);
-    expect(output).toContain(`test-out/${NAME}-2`);
+    expect(output).toContain(`${getPath()}/button-1`);
+    expect(output).toContain(`${getPath()}/button-2`);
   });
 });

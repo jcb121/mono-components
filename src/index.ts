@@ -4,8 +4,6 @@ import fs, { existsSync, globSync } from "fs";
 import path from "path";
 import { execSync } from "child_process";
 
-const BASES_DIR = path.join(findPackageRoot(), ".variant-bases");
-
 function findPackageRoot(): string {
   let dir = process.cwd();
   while (true) {
@@ -19,6 +17,28 @@ function findPackageRoot(): string {
   }
 }
 
+function getBasesDir(): string {
+  const opts = program.opts<{ basesDir?: string }>();
+  const dir = opts.basesDir ? path.resolve(opts.basesDir) : path.join(findPackageRoot(), ".variant-bases");
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function findVariants(sourcePath: string): string[] {
+  const header = `// branched from: ${sourcePath}`;
+  const root = findPackageRoot();
+  return [...new Set(
+    globSync("**/*", { cwd: root, exclude: (p) => p.includes("node_modules") })
+      .filter((f) => {
+        const abs = path.join(root, f);
+        if (!fs.statSync(abs).isFile()) return false;
+        const firstLine = fs.readFileSync(abs, "utf-8").split("\n")[0];
+        return firstLine === header;
+      })
+      .map((f) => path.join(root, path.dirname(f)))
+  )];
+}
+
 try {
   execSync("git --version", { stdio: "ignore" });
 } catch {
@@ -28,6 +48,9 @@ try {
 
 program
   .name("variant")
+  .option("--bases-dir <path>", "directory to store base snapshots");
+
+program
   .command("branch <sourcePath> <targetPath>")
   .description("scaffold a new component variant at the given path")
   .action((sourcePath: string, targetPath: string) => {
@@ -44,52 +67,46 @@ program
     deepCopyFolder(sourcePath, targetPath, header);
 
     const baseName = path.basename(path.resolve(targetPath));
-    const baseSnapshot = path.join(BASES_DIR, baseName);
+    const baseSnapshot = path.join(getBasesDir(), baseName);
     deepCopyFolder(sourcePath, baseSnapshot, header);
 
     console.log(`Branched ${sourcePath} → ${targetPath}`);
   });
 
 program
-  .name("variant")
-  .command("rebase <sourcePath> <targetPath>")
+  .command("rebase <sourcePath> [targetPath]")
   .description("apply upstream changes from source into the target variant")
-  .action((sourcePath: string, targetPath: string) => {
-    const baseName = path.basename(path.resolve(targetPath));
-    const baseSnapshot = path.join(BASES_DIR, baseName);
+  .option("--all", "rebase all variants branched from source")
+  .action((sourcePath: string, targetPath: string | undefined, options: { all?: boolean }) => {
+    const targets = options.all ? findVariants(sourcePath) : targetPath ? [targetPath] : [];
 
-    if (!existsSync(baseSnapshot)) {
-      console.error(`No base snapshot found for ${targetPath}. Was it created with 'branch'?`);
+    if (targets.length === 0) {
+      console.error("Specify a target path or use --all");
       process.exit(1);
     }
 
-    rebaseFolder(sourcePath, targetPath, baseSnapshot);
+    for (const target of targets) {
+      const baseName = path.basename(path.resolve(target));
+      const baseSnapshot = path.join(getBasesDir(), baseName);
 
-    deepCopyFolder(sourcePath, baseSnapshot);
+      if (!existsSync(baseSnapshot)) {
+        console.error(`No base snapshot found for ${target}. Was it created with 'branch'?`);
+        process.exit(1);
+      }
 
-    console.log(`Rebased ${targetPath} onto ${sourcePath}`);
+      rebaseFolder(sourcePath, target, baseSnapshot);
+      deepCopyFolder(sourcePath, baseSnapshot);
+      console.log(`Rebased ${target} onto ${sourcePath}`);
+    }
   });
 
 program
-  .name("variant")
   .command("list <sourcePath>")
   .description("list all variants branched from the given path")
   .action((sourcePath: string) => {
-    const header = `// branched from: ${sourcePath}`;
-    const root = findPackageRoot();
+    const variants = findVariants(sourcePath);
 
-    const variants = new Set(
-      globSync("**/*", { cwd: root, exclude: (p) => p.includes("node_modules") })
-        .filter((f) => {
-          const abs = path.join(root, f);
-          if (!fs.statSync(abs).isFile()) return false;
-          const firstLine = fs.readFileSync(abs, "utf-8").split("\n")[0];
-          return firstLine === header;
-        })
-        .map((f) => path.dirname(f))
-    );
-
-    if (variants.size === 0) {
+    if (variants.length === 0) {
       console.log(`No variants found for ${sourcePath}`);
     } else {
       console.log(`Variants branched from ${sourcePath}:`);
@@ -138,13 +155,11 @@ function rebaseFolder(source: string, target: string, base: string) {
     }
 
     if (!existsSync(baseFile)) {
-      // New file added in source — bring it into target
       fs.copyFileSync(sourcePath, targetFile);
       continue;
     }
 
     if (!existsSync(sourcePath)) {
-      // File deleted in source — remove from target too
       fs.rmSync(targetFile, { force: true });
       continue;
     }
