@@ -21,8 +21,8 @@ describe("branch command", () => {
 
     expect(existsSync(`${getPath()}/button-1`)).toBe(true);
 
+    expect(existsSync(`${getPath()}/button-1/variant.json`)).toBe(true);
     const contents = readFileSync(`${getPath()}/button-1/index.tsx`, "utf-8");
-    expect(contents).toContain(`// branched from: ${getPath()}/button`);
     expect(contents).toContain(
       readFileSync("./test-in/button/index.tsx", "utf-8"),
     );

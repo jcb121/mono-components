@@ -41,5 +41,5 @@
     "moduleDetection": "force",
     "skipLibCheck": true,
   },
-  "include": ["src/**/*", "tests/*"]
+  "include": ["src/**/*", "declarations.d.ts", "tests/*", "test-in/**/*"]
 }

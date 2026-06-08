@@ -2,7 +2,16 @@
 import { program } from "commander";
 import fs, { existsSync, globSync } from "fs";
 import path from "path";
+import os from "os";
+import zlib from "zlib";
 import { execSync } from "child_process";
+
+const VARIANT_FILE = "variant.json";
+
+interface VariantMeta {
+  source: string;
+  base: string; // brotli base64 of JSON.stringify(Record<relative path, file contents>)
+}
 
 function findPackageRoot(): string {
   let dir = process.cwd();
@@ -17,26 +26,52 @@ function findPackageRoot(): string {
   }
 }
 
-function getBasesDir(): string {
-  const opts = program.opts<{ basesDir?: string }>();
-  const dir = opts.basesDir ? path.resolve(opts.basesDir) : path.join(findPackageRoot(), ".variant-bases");
-  fs.mkdirSync(dir, { recursive: true });
-  return dir;
+function findVariants(sourcePath: string): string[] {
+  const root = findPackageRoot();
+  return globSync(`**/${VARIANT_FILE}`, { cwd: root, exclude: (p) => p.includes("node_modules") })
+    .filter((f) => {
+      const meta: VariantMeta = JSON.parse(fs.readFileSync(path.join(root, f), "utf-8"));
+      return meta.source === sourcePath;
+    })
+    .map((f) => path.relative(process.cwd(), path.join(root, path.dirname(f))));
 }
 
-function findVariants(sourcePath: string): string[] {
-  const header = `// branched from: ${sourcePath}`;
-  const root = findPackageRoot();
-  return [...new Set(
-    globSync("**/*", { cwd: root, exclude: (p) => p.includes("node_modules") })
-      .filter((f) => {
-        const abs = path.join(root, f);
-        if (!fs.statSync(abs).isFile()) return false;
-        const firstLine = fs.readFileSync(abs, "utf-8").split("\n")[0];
-        return firstLine === header;
-      })
-      .map((f) => path.join(root, path.dirname(f)))
-  )];
+function readBaseSnapshot(targetPath: string): VariantMeta {
+  const metaPath = path.join(targetPath, VARIANT_FILE);
+  if (!existsSync(metaPath)) {
+    console.error(`No variant.json found in ${targetPath}. Was it created with 'branch'?`);
+    process.exit(1);
+  }
+  return JSON.parse(fs.readFileSync(metaPath, "utf-8"));
+}
+
+function collectFiles(dir: string, rel = ""): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      Object.assign(result, collectFiles(path.join(dir, entry.name), relPath));
+    } else {
+      result[relPath] = fs.readFileSync(path.join(dir, entry.name), "utf-8");
+    }
+  }
+  return result;
+}
+
+function compressFiles(dir: string): string {
+  const files = collectFiles(dir);
+  return zlib.brotliCompressSync(JSON.stringify(files)).toString("base64");
+}
+
+function extractToDir(base: string, dir: string) {
+  const files: Record<string, string> = JSON.parse(
+    zlib.brotliDecompressSync(Buffer.from(base, "base64")).toString()
+  );
+  for (const [relPath, contents] of Object.entries(files)) {
+    const dest = path.join(dir, relPath);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.writeFileSync(dest, contents);
+  }
 }
 
 try {
@@ -46,9 +81,7 @@ try {
   process.exit(1);
 }
 
-program
-  .name("variant")
-  .option("--bases-dir <path>", "directory to store base snapshots");
+program.name("variant");
 
 program
   .command("branch <sourcePath> <targetPath>")
@@ -58,17 +91,22 @@ program
       console.error(`Source does not exist: ${sourcePath}`);
       process.exit(1);
     }
+    if (!fs.statSync(sourcePath).isDirectory()) {
+      console.error(`Source must be a directory, not a file: ${sourcePath}`);
+      process.exit(1);
+    }
     if (existsSync(targetPath)) {
       console.error(`Target already exists: ${targetPath}`);
       process.exit(1);
     }
 
-    const header = `// branched from: ${sourcePath}\n`;
-    deepCopyFolder(sourcePath, targetPath, header);
+    deepCopyFolder(sourcePath, targetPath);
 
-    const baseName = path.basename(path.resolve(targetPath));
-    const baseSnapshot = path.join(getBasesDir(), baseName);
-    deepCopyFolder(sourcePath, baseSnapshot, header);
+    const meta: VariantMeta = {
+      source: sourcePath,
+      base: compressFiles(sourcePath),
+    };
+    fs.writeFileSync(path.join(targetPath, VARIANT_FILE), JSON.stringify(meta, null, 2));
 
     console.log(`Branched ${sourcePath} → ${targetPath}`);
   });
@@ -77,7 +115,8 @@ program
   .command("rebase <sourcePath> [targetPath]")
   .description("apply upstream changes from source into the target variant")
   .option("--all", "rebase all variants branched from source")
-  .action((sourcePath: string, targetPath: string | undefined, options: { all?: boolean }) => {
+  .option("--force", "rebase even if the target has downstream variants")
+  .action((sourcePath: string, targetPath: string | undefined, options: { all?: boolean; force?: boolean }) => {
     const targets = options.all ? findVariants(sourcePath) : targetPath ? [targetPath] : [];
 
     if (targets.length === 0) {
@@ -86,16 +125,27 @@ program
     }
 
     for (const target of targets) {
-      const baseName = path.basename(path.resolve(target));
-      const baseSnapshot = path.join(getBasesDir(), baseName);
-
-      if (!existsSync(baseSnapshot)) {
-        console.error(`No base snapshot found for ${target}. Was it created with 'branch'?`);
+      const downstream = findVariants(target);
+      if (downstream.length > 0 && !options.force) {
+        console.error(`Cannot rebase ${target}: it has downstream variants that would become stale:`);
+        for (const d of downstream) console.error(`  ${d}`);
+        console.error("Run with --force to rebase anyway.");
         process.exit(1);
       }
 
-      rebaseFolder(sourcePath, target, baseSnapshot);
-      deepCopyFolder(sourcePath, baseSnapshot);
+      const meta = readBaseSnapshot(target);
+
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "variant-base-"));
+      try {
+        extractToDir(meta.base, tmpDir);
+        rebaseFolder(sourcePath, target, tmpDir);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+
+      meta.base = collectFiles(sourcePath);
+      fs.writeFileSync(path.join(target, VARIANT_FILE), JSON.stringify(meta, null, 2));
+
       console.log(`Rebased ${target} onto ${sourcePath}`);
     }
   });
@@ -117,7 +167,7 @@ program
 program.parse();
 
 
-function deepCopyFolder(src: string, dest: string, header?: string) {
+function deepCopyFolder(src: string, dest: string) {
   if (!fs.existsSync(dest)) {
     fs.mkdirSync(dest, { recursive: true });
   }
@@ -125,10 +175,7 @@ function deepCopyFolder(src: string, dest: string, header?: string) {
     const srcPath = path.join(src, entry.name);
     const destPath = path.join(dest, entry.name);
     if (entry.isDirectory()) {
-      deepCopyFolder(srcPath, destPath, header);
-    } else if (header) {
-      const contents = fs.readFileSync(srcPath, "utf-8");
-      fs.writeFileSync(destPath, header + contents);
+      deepCopyFolder(srcPath, destPath);
     } else {
       fs.copyFileSync(srcPath, destPath);
     }
@@ -138,7 +185,7 @@ function deepCopyFolder(src: string, dest: string, header?: string) {
 function rebaseFolder(source: string, target: string, base: string) {
   const entries = new Set([
     ...fs.readdirSync(source),
-    ...fs.readdirSync(target),
+    ...fs.readdirSync(target).filter((n) => n !== VARIANT_FILE),
   ]);
 
   for (const name of entries) {

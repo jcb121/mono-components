@@ -14,5 +14,5 @@ export const getPath = () => {
 };
 
 export const baseCommand = () => {
-  return `npx tsx ./src/index.ts --bases-dir ${getPath()}/bases`
+  return `npx tsx ./src/index.ts`
 }

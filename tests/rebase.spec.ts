@@ -9,6 +9,21 @@ describe("rebase command", () => {
     rmSync(getPath(), { recursive: true, force: true });
   });
 
+  it("should only allow folders to be branched", () => {
+    execSync(`cp -r ./test-in/button ${getPath()}/button`);
+
+    try {
+      execSync(
+        `${baseCommand()} branch ${getPath()}/button/index.tsx ${getPath()}/button-1/index.ts`,
+        { stdio: "pipe" }
+      );
+      expect.fail("should have thrown");
+    } catch (err: any) {
+      expect(err.stderr.toString()).toContain("Source must be a directory");
+    }
+  })
+
+
   it("should rebase the changes", () => {
     // copy a mock to the test folder
     execSync(`cp -r ./test-in/button ${getPath()}/button`);
