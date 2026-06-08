@@ -167,7 +167,10 @@ function rebaseFolder(source: string, target: string, base: string) {
     // 3-way merge: target = ours, base = ancestor, source = theirs
     // exit 1 = conflicts present but merge written with markers — not a fatal error
     try {
-      execSync(`git merge-file "${targetFile}" "${baseFile}" "${sourcePath}"`);
+      const relTarget = path.relative(process.cwd(), targetFile);
+      const relSource = path.relative(process.cwd(), sourcePath);
+      const relBase = path.relative(process.cwd(), baseFile);
+      execSync(`git merge-file -L "${relTarget}" -L "${relBase}" -L "${relSource}" "${targetFile}" "${baseFile}" "${sourcePath}"`);
     } catch (err: any) {
       if (err.status !== 1) throw err;
     }

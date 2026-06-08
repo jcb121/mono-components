@@ -114,11 +114,11 @@ describe("rebase command", () => {
     expect(fileContents).toContain("export const TheirButton = () => {");
 
     expect(fileContents).toContain(
-      "<<<<<<< /Users/jesse/Projects/mono-components/test-out/rebase-command---should-rebase-the-changes/button-1/index.tsx"
+      "<<<<<<< test-out/rebase-command---should-rebase-the-changes/button-1/index.tsx"
     );
     expect(fileContents).toContain("=======");
     expect(fileContents).toContain(
-      ">>>>>>> /Users/jesse/Projects/mono-components/test-out/rebase-command---should-rebase-the-changes/button/index.tsx"
+      ">>>>>>> test-out/rebase-command---should-rebase-the-changes/button/index.tsx"
     );
   });
 
@@ -167,7 +167,6 @@ describe("rebase command", () => {
 });
 
 describe("list command", () => {
-
   afterEach(() => {
     rmSync(getPath(), { recursive: true, force: true });
 
